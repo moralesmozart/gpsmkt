@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-areia-50 text-ink font-sans antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  h1, h2, h3 { @apply font-display tracking-tight; }
+  :focus-visible { outline: 3px solid #2F6BFF; outline-offset: 2px; border-radius: 10px; }
+  button, input { font-family: inherit; }
+}
+
+@layer components {
+  .btn {
+    @apply relative inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 font-display text-lg font-bold
+      transition-[transform,box-shadow,background-color] duration-150 select-none disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary { @apply btn bg-mata-600 text-white hover:bg-mata-700; box-shadow: 0 4px 0 0 #086B34; }
+  .btn-primary:active { transform: translateY(3px); box-shadow: 0 1px 0 0 #086B34; }
+  .btn-ghost { @apply btn bg-white text-ink hover:bg-areia-50 border-2 border-areia-200; box-shadow: 0 3px 0 0 #E7DCC4; }
+  .btn-ghost:active { transform: translateY(2px); box-shadow: 0 1px 0 0 #E7DCC4; }
+  .chip { @apply inline-flex items-center gap-1.5 rounded-full border-2 px-3.5 py-1.5 text-sm font-bold transition-colors; }
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }

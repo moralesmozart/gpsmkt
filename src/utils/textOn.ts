@@ -1,0 +1,9 @@
+/** White text only when contrast against the fill is at least 4.5:1. Otherwise tinta. */
+export function textOn(hexColor: string) {
+  const hex = hexColor.replace('#', '')
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) =>
+    c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4,
+  )
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return 1.05 / (lum + 0.05) >= 4.5 ? '#FFFFFF' : '#1B2A3A'
+}
