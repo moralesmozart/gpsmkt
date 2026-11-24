@@ -13,11 +13,10 @@ export const SONGS: { id: string; label: string }[] = [
 
 const FILES: Record<string, string> = {
   tap: 'sounds/tap.wav',
-  done: 'sounds/done.wav',
   ...Object.fromEntries(SONGS.map((song) => [song.id, `sounds/${song.id}.m4a`])),
 }
 
-const LEVEL: Record<string, number> = { tap: 0.35, done: 0.4, piano: 0.55, soft: 0.5, bedazzled: 0.5 }
+const LEVEL: Record<string, number> = { tap: 0.35, piano: 0.55, soft: 0.5, bedazzled: 0.5 }
 const SONG_IDS = new Set(SONGS.map((song) => song.id))
 
 export function songLabel(id: string) {
@@ -134,6 +133,5 @@ export function soundCues(slides: Slide[], song?: string | null) {
     acc += slide.duration
   })
   if (song && SONG_IDS.has(song) && acc > 0) cues.unshift({ time: 0, name: song, duration: acc })
-  if (acc > 0.4) cues.push({ time: Math.max(0, acc - 0.28), name: 'done' })
   return cues
 }
