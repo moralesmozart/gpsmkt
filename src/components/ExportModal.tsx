@@ -3,7 +3,7 @@ import { FORMATS, totalDuration } from '../types/project'
 import { loadImages } from '../utils/images'
 import { renderFrame } from '../utils/canvasRenderer'
 import { exportVideo } from '../utils/videoExporter'
-import { beginRecordingMix, endRecordingMix, playSound, soundCues, unlockAudio } from '../utils/sounds'
+import { mixCues, soundCues, unlockAudio } from '../utils/sounds'
 import { Logo } from './Logo'
 import { useMkt } from '../store'
 
@@ -27,21 +27,15 @@ export function ExportModal({ sound }: { sound: boolean }) {
         const images = await loadImages(api.urls, api.slides.map((slide) => slide.imageId))
         const ctx = canvas.getContext('2d', { alpha: false })
         if (!ctx) throw new Error('Canvas is not available.')
+        const duration = Math.max(0.5, totalDuration(api.slides))
         const cues = sound ? soundCues(api.slides) : []
-        let heard = 0
         if (sound) await unlockAudio()
         const result = await exportVideo({
           canvas,
-          duration: Math.max(0.5, totalDuration(api.slides)),
+          duration,
           signal: controller.signal,
           onProgress: setProgress,
-          mix: sound ? beginRecordingMix : undefined,
-          onCue: (time) => {
-            while (heard < cues.length && cues[heard].time <= time + 0.02) {
-              playSound(cues[heard].name, undefined, cues[heard].duration)
-              heard += 1
-            }
-          },
+          audio: sound ? () => mixCues(cues, duration) : undefined,
           draw: (time) => renderFrame(ctx, { slides: api.slides, images, time, w: canvas.width, h: canvas.height }),
         })
         if (controller.signal.aborted) return
@@ -55,7 +49,6 @@ export function ExportModal({ sound }: { sound: boolean }) {
     })()
     return () => {
       controller.abort()
-      endRecordingMix()
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [api.slides, api.urls, api.format, sound])
@@ -65,7 +58,9 @@ export function ExportModal({ sound }: { sound: boolean }) {
     const link = document.createElement('a')
     link.href = url
     link.download = `gps-mkt-${api.format}.${ext}`
+    document.body.appendChild(link)
     link.click()
+    link.remove()
   }
 
   return (

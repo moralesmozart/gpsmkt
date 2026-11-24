@@ -33,7 +33,6 @@ export function songLabel(id: string) {
 let ctx: AudioContext | null = null
 let buffers: Record<string, AudioBuffer> = {}
 let loading: Promise<void> | null = null
-let recordDest: MediaStreamAudioDestinationNode | null = null
 const live = new Set<AudioBufferSourceNode>()
 
 function context() {
@@ -57,14 +56,28 @@ export function unlockAudio() {
   return loading
 }
 
-export function beginRecordingMix() {
-  const audio = context()
-  recordDest = audio.createMediaStreamDestination()
-  return recordDest.stream.getAudioTracks()[0] ?? null
-}
-
-export function endRecordingMix() {
-  recordDest = null
+/** Mixes the step songs and interface sounds into one buffer for the exported file. */
+export async function mixCues(cues: SoundCue[], duration: number) {
+  const rate = 48000
+  const length = Math.max(1, Math.ceil(Math.max(0.1, duration) * rate))
+  const offline = new OfflineAudioContext(2, length, rate)
+  let mixed = false
+  for (const cue of cues) {
+    const buffer = buffers[cue.name]
+    if (!buffer) continue
+    mixed = true
+    const source = offline.createBufferSource()
+    source.buffer = buffer
+    const gain = offline.createGain()
+    gain.gain.value = LEVEL[cue.name] ?? 0.7
+    source.connect(gain)
+    gain.connect(offline.destination)
+    const start = Math.max(0, cue.time)
+    source.start(start)
+    if (cue.duration && cue.duration > 0) source.stop(Math.min(duration, start + cue.duration))
+  }
+  if (!mixed) return null
+  return offline.startRendering()
 }
 
 export function stopSounds() {
@@ -89,7 +102,6 @@ export function playSound(name: string, at?: number, duration?: number) {
   gain.gain.value = LEVEL[name] ?? 0.7
   source.connect(gain)
   gain.connect(audio.destination)
-  if (recordDest) gain.connect(recordDest)
   const startAt = at ?? audio.currentTime
   source.onended = () => live.delete(source)
   live.add(source)
