@@ -71,10 +71,6 @@ function Shell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [api, sound])
 
-  if (!api.ready) {
-    return <div className="grid h-full place-items-center font-display text-3xl font-extrabold">GPS MKT</div>
-  }
-
   return (
     <div
       className="flex h-full flex-col overflow-hidden"
@@ -189,7 +185,7 @@ function Dropzone({ hot }: { hot: boolean }) {
   return (
     <div className="grid flex-1 place-items-center px-4 pb-8">
       <div className={`w-full max-w-xl rounded-4xl border-2 border-dashed px-8 py-16 text-center ${hot ? 'border-mata-500 bg-mata-50' : 'border-areia-200 bg-areia-100'}`}>
-        <h1 className="font-display text-4xl font-extrabold">Drop screenshots</h1>
+        <h1 className="font-display text-4xl font-extrabold">Start a tutorial</h1>
         <p className="mx-auto mt-2 max-w-md text-base text-ink-soft">
           Turn a few screens into a short tutorial. No account, and nothing leaves this browser.
         </p>

@@ -64,7 +64,7 @@ export function useMkt() {
 }
 
 export function MktProvider({ children }: { children: ReactNode }) {
-  const [ready, setReady] = useState(false)
+  const allowSave = useRef(false)
   const [format, setFormat] = useState<FormatId>('square')
   const [slides, setSlides] = useState<Slide[]>([])
   const [song, setSong] = useState<string | null>(null)
@@ -90,33 +90,37 @@ export function MktProvider({ children }: { children: ReactNode }) {
     let cancel = false
     const urlsMade: string[] = []
     ;(async () => {
-      const saved = await idbGet<Project & { slides: (Slide & { song?: string | null })[] }>('project')
-      if (cancel) return
-      if (!saved?.slides?.length) {
-        setReady(true)
-        return
-      }
-      const nextUrls: Record<string, string> = {}
-      const kept: Slide[] = []
-      for (const slide of saved.slides) {
-        if (nextUrls[slide.imageId]) {
+      try {
+        const saved = await idbGet<Project & { slides: (Slide & { song?: string | null })[] }>('project')
+        if (cancel || slidesRef.current.length || !saved?.slides?.length) return
+        const nextUrls: Record<string, string> = {}
+        const kept: Slide[] = []
+        for (const slide of saved.slides) {
+          if (nextUrls[slide.imageId]) {
+            kept.push(slide)
+            continue
+          }
+          const blob = await idbGet<Blob>(`img:${slide.imageId}`)
+          if (!blob) continue
+          const url = URL.createObjectURL(blob)
+          urlsMade.push(url)
+          nextUrls[slide.imageId] = url
           kept.push(slide)
-          continue
         }
-        const blob = await idbGet<Blob>(`img:${slide.imageId}`)
-        if (!blob) continue
-        const url = URL.createObjectURL(blob)
-        urlsMade.push(url)
-        nextUrls[slide.imageId] = url
-        kept.push(slide)
+        if (cancel || slidesRef.current.length) {
+          urlsMade.forEach((url) => URL.revokeObjectURL(url))
+          return
+        }
+        if (saved.format === 'square' || saved.format === 'reels' || saved.format === 'demo') setFormat(saved.format)
+        setSlides(kept)
+        const previous = saved.slides as (Slide & { song?: string | null })[]
+        setSong(saved.song ?? previous.find((slide) => slide.song)?.song ?? null)
+        setUrls(nextUrls)
+      } catch {
+        /* open on the start screen if this browser blocks storage */
+      } finally {
+        allowSave.current = true
       }
-      if (cancel) return
-      setFormat(saved.format)
-      setSlides(kept)
-      const previous = saved.slides as (Slide & { song?: string | null })[]
-      setSong(saved.song ?? previous.find((slide) => slide.song)?.song ?? null)
-      setUrls(nextUrls)
-      setReady(true)
     })()
     return () => {
       cancel = true
@@ -125,12 +129,12 @@ export function MktProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (!ready) return
+    if (!allowSave.current) return
     const handle = setTimeout(() => {
-      void idbSet('project', { format, slides, song } satisfies Project)
+      void idbSet('project', { format, slides, song } satisfies Project).catch(() => undefined)
     }, 200)
     return () => clearTimeout(handle)
-  }, [ready, format, slides, song])
+  }, [format, slides, song])
 
   useEffect(() => {
     const total = totalDuration(slides)
@@ -342,7 +346,7 @@ export function MktProvider({ children }: { children: ReactNode }) {
   }
 
   const api: MktApi = {
-    ready,
+    ready: true,
     format,
     slides,
     song,

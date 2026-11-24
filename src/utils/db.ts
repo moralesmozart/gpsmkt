@@ -7,9 +7,24 @@ function open(): Promise<IDBDatabase> {
   if (!opening) {
     opening = new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, 1)
+      const fail = (error: unknown) => {
+        opening = null
+        reject(error instanceof Error ? error : new Error('IndexedDB failed'))
+      }
+      const timer = window.setTimeout(() => fail(new Error('IndexedDB timed out')), 2000)
       req.onupgradeneeded = () => req.result.createObjectStore(STORE)
-      req.onsuccess = () => resolve(req.result)
-      req.onerror = () => reject(req.error)
+      req.onsuccess = () => {
+        window.clearTimeout(timer)
+        resolve(req.result)
+      }
+      req.onerror = () => {
+        window.clearTimeout(timer)
+        fail(req.error)
+      }
+      req.onblocked = () => {
+        window.clearTimeout(timer)
+        fail(new Error('IndexedDB blocked'))
+      }
     })
   }
   return opening
