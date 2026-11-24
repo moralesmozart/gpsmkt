@@ -42,6 +42,8 @@ export interface Slide {
   background: BgFill
   transition: TransitionKind
   overlays: Overlay[]
+  /** Id from the built-in song library. Empty means this step is silent. */
+  song?: string | null
 }
 
 export interface Project {

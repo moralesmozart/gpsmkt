@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Copy, Pause, Play, Plus, Trash2 } from 'lucide-react'
 import { BACKGROUNDS, TRANSITIONS, slideName, totalDuration } from '../types/project'
 import { useMkt } from '../store'
-import { unlockAudio } from '../utils/sounds'
+import { playSound, SONGS, songLabel, stopSounds, unlockAudio } from '../utils/sounds'
 
 const DURATIONS = [2, 3, 5, 8]
 
@@ -102,10 +102,11 @@ export function TimelineDock() {
                       </button>
                     </span>
                     <span className="mt-1.5 block text-center text-sm font-extrabold">{slideName(index, api.slides.length)}</span>
+                    {slide.song && <span className="block text-center text-[11px] font-bold text-mata-700">{songLabel(slide.song)}</span>}
                   </div>
                   {openId === slide.id && (
                     <div className="relative z-20">
-                      <div className="absolute bottom-full left-1/2 z-20 mb-2 w-56 -translate-x-1/2 rounded-2xl bg-white p-3 shadow-pop">
+                      <div className="absolute bottom-full left-1/2 z-20 mb-2 w-64 -translate-x-1/2 rounded-2xl bg-white p-3 shadow-pop">
                         <div className="mb-2 flex flex-wrap gap-1">
                           {DURATIONS.map((duration) => (
                             <button
@@ -141,6 +142,37 @@ export function TimelineDock() {
                               {item.label}
                             </button>
                           ))}
+                        </div>
+                        <div className="mb-2">
+                          <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-ink-mute">Song</div>
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                stopSounds()
+                                api.updateSlide(slide.id, { song: null })
+                              }}
+                              className={`rounded-full px-2 py-1 text-[11px] font-extrabold ${!slide.song ? 'bg-ink text-white' : 'bg-areia-100 text-ink-soft'}`}
+                            >
+                              None
+                            </button>
+                            {SONGS.map((song) => (
+                              <button
+                                key={song.id}
+                                type="button"
+                                onClick={() => {
+                                  api.updateSlide(slide.id, { song: song.id })
+                                  void unlockAudio().then(() => {
+                                    stopSounds()
+                                    playSound(song.id)
+                                  })
+                                }}
+                                className={`rounded-full px-2 py-1 text-[11px] font-extrabold ${slide.song === song.id ? 'bg-mata-600 text-white' : 'bg-areia-100 text-ink-soft'}`}
+                              >
+                                {song.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                         <div className="flex gap-2">
                           <button type="button" onClick={() => api.duplicateSlide(slide.id)} className="inline-flex items-center gap-1 text-xs font-extrabold text-ink-soft">

@@ -7,7 +7,7 @@ import { Logo } from './components/Logo'
 import { StageCanvas } from './components/StageCanvas'
 import { TimelineDock } from './components/TimelineDock'
 import { MktProvider, useMkt } from './store'
-import { playSound, soundCues, unlockAudio } from './utils/sounds'
+import { playSound, soundCues, stopSounds, unlockAudio } from './utils/sounds'
 
 export default function App() {
   return (
@@ -39,12 +39,13 @@ function Shell() {
     const cues = soundCues(slidesRef.current).filter((cue) => cue.time >= origin - 0.03)
     const timers = cues.map((cue) =>
       window.setTimeout(() => {
-        if (!cancel) playSound(cue.name)
+        if (!cancel) playSound(cue.name, undefined, cue.duration)
       }, Math.max(0, (cue.time - origin) * 1000)),
     )
     return () => {
       cancel = true
       timers.forEach((timer) => window.clearTimeout(timer))
+      stopSounds()
     }
   }, [api.playing, sound])
 

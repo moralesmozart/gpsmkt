@@ -9,4 +9,4 @@ npm run dev
 
 Published at https://moralesmozart.github.io/gpsmkt/ from the `main` branch.
 
-Interface sounds are Kenney's CC0 pack (www.kenney.nl).
+Sounds and the ten step songs are Kenney's CC0 packs (www.kenney.nl).

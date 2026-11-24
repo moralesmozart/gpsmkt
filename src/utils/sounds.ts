@@ -1,20 +1,40 @@
 import type { Slide } from '../types/project'
 
-/** Kenney Interface Sounds, CC0. www.kenney.nl */
-export type SoundName = 'tap' | 'move' | 'done'
+/**
+ * Built-in audio, all CC0 from Kenney (www.kenney.nl):
+ * interface taps, plus ten short jingles used as the step songs.
+ */
+export const SONGS: { id: string; label: string }[] = [
+  { id: 'pop', label: 'Pop' },
+  { id: 'bounce', label: 'Bounce' },
+  { id: 'spark', label: 'Spark' },
+  { id: 'glow', label: 'Glow' },
+  { id: 'cheer', label: 'Cheer' },
+  { id: 'win', label: 'Win' },
+  { id: 'coin', label: 'Coin' },
+  { id: 'jump', label: 'Jump' },
+  { id: 'quest', label: 'Quest' },
+  { id: 'pixel', label: 'Pixel' },
+]
 
-const FILES: Record<SoundName, string> = {
+const FILES: Record<string, string> = {
   tap: 'sounds/tap.wav',
   move: 'sounds/move.wav',
   done: 'sounds/done.wav',
+  ...Object.fromEntries(SONGS.map((song) => [song.id, `sounds/${song.id}.wav`])),
 }
 
-const LEVEL: Record<SoundName, number> = { tap: 0.55, move: 0.32, done: 0.62 }
+const LEVEL: Record<string, number> = { tap: 0.45, move: 0.28, done: 0.5 }
+
+export function songLabel(id: string) {
+  return SONGS.find((song) => song.id === id)?.label ?? ''
+}
 
 let ctx: AudioContext | null = null
-let buffers: Partial<Record<SoundName, AudioBuffer>> = {}
+let buffers: Record<string, AudioBuffer> = {}
 let loading: Promise<void> | null = null
 let recordDest: MediaStreamAudioDestinationNode | null = null
+const live = new Set<AudioBufferSourceNode>()
 
 function context() {
   if (!ctx) ctx = new AudioContext()
@@ -27,7 +47,7 @@ export function unlockAudio() {
   void audio.resume()
   if (!loading) {
     loading = Promise.all(
-      (Object.keys(FILES) as SoundName[]).map(async (name) => {
+      Object.keys(FILES).map(async (name) => {
         const response = await fetch(`${import.meta.env.BASE_URL}${FILES[name]}`)
         const data = await response.arrayBuffer()
         buffers[name] = await audio.decodeAudioData(data)
@@ -47,29 +67,52 @@ export function endRecordingMix() {
   recordDest = null
 }
 
-export function playSound(name: SoundName, at?: number) {
+export function stopSounds() {
+  for (const source of live) {
+    try {
+      source.stop()
+    } catch {
+      /* already finished */
+    }
+  }
+  live.clear()
+}
+
+/** `duration` cuts the clip off, so a step song does not spill into the next step. */
+export function playSound(name: string, at?: number, duration?: number) {
   const audio = ctx
   const buffer = buffers[name]
   if (!audio || !buffer || audio.state === 'closed') return
   const source = audio.createBufferSource()
   source.buffer = buffer
   const gain = audio.createGain()
-  gain.gain.value = LEVEL[name]
+  gain.gain.value = LEVEL[name] ?? 0.7
   source.connect(gain)
   gain.connect(audio.destination)
   if (recordDest) gain.connect(recordDest)
-  source.start(at ?? audio.currentTime)
+  const startAt = at ?? audio.currentTime
+  source.onended = () => live.delete(source)
+  live.add(source)
+  source.start(startAt)
+  if (duration && duration > 0) source.stop(startAt + duration)
 }
 
 export function audioNow() {
   return ctx?.currentTime ?? 0
 }
 
-/** Tap on a click-pulse, a short move on each transition, and a chime at the end. */
+export interface SoundCue {
+  time: number
+  name: string
+  duration?: number
+}
+
+/** The step song at the start of each slide, plus the small interface accents. */
 export function soundCues(slides: Slide[]) {
-  const cues: { time: number; name: SoundName }[] = []
+  const cues: SoundCue[] = []
   let acc = 0
   slides.forEach((slide, index) => {
+    if (slide.song) cues.push({ time: acc, name: slide.song, duration: slide.duration })
     if (slide.overlays.some((overlay) => overlay.kind === 'focus' && overlay.pulse)) {
       cues.push({ time: acc + slide.duration * 0.42, name: 'tap' })
     }

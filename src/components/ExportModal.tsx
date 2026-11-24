@@ -38,7 +38,7 @@ export function ExportModal({ sound }: { sound: boolean }) {
           mix: sound ? beginRecordingMix : undefined,
           onCue: (time) => {
             while (heard < cues.length && cues[heard].time <= time + 0.02) {
-              playSound(cues[heard].name)
+              playSound(cues[heard].name, undefined, cues[heard].duration)
               heard += 1
             }
           },
