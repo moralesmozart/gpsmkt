@@ -1,12 +1,15 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  makeOverlay,
   makeSlide,
   slideAt,
   totalDuration,
   uid,
+  type ElementKind,
   type FocusOverlay,
   type FormatId,
   type Overlay,
+  type Tool,
   type Project,
   type Slide,
 } from './types/project'
@@ -18,6 +21,7 @@ interface MktApi {
   ready: boolean
   format: FormatId
   slides: Slide[]
+  song: string | null
   urls: Record<string, string>
   time: number
   playing: boolean
@@ -41,8 +45,13 @@ interface MktApi {
   duplicateSlide: (id: string) => void
   reorder: (fromId: string, toId: string) => void
   seekSlide: (id: string) => void
+  tool: Tool
+  setTool: (tool: Tool) => void
   applyZoomIn: () => void
   addText: () => void
+  addCursor: () => void
+  placeElement: (slideId: string, kind: ElementKind, at: number) => void
+  setSong: (song: string | null) => void
   setExportOpen: (open: boolean) => void
 }
 
@@ -58,10 +67,12 @@ export function MktProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false)
   const [format, setFormat] = useState<FormatId>('square')
   const [slides, setSlides] = useState<Slide[]>([])
+  const [song, setSong] = useState<string | null>(null)
   const [urls, setUrls] = useState<Record<string, string>>({})
   const [time, setTimeState] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [tool, setTool] = useState<Tool>('focus')
   const [exportOpen, setExportOpen] = useState(false)
   const timeRef = useRef(0)
   const slidesRef = useRef(slides)
@@ -79,7 +90,7 @@ export function MktProvider({ children }: { children: ReactNode }) {
     let cancel = false
     const urlsMade: string[] = []
     ;(async () => {
-      const saved = await idbGet<Project>('project')
+      const saved = await idbGet<Project & { slides: (Slide & { song?: string | null })[] }>('project')
       if (cancel) return
       if (!saved?.slides?.length) {
         setReady(true)
@@ -102,6 +113,8 @@ export function MktProvider({ children }: { children: ReactNode }) {
       if (cancel) return
       setFormat(saved.format)
       setSlides(kept)
+      const previous = saved.slides as (Slide & { song?: string | null })[]
+      setSong(saved.song ?? previous.find((slide) => slide.song)?.song ?? null)
       setUrls(nextUrls)
       setReady(true)
     })()
@@ -114,10 +127,10 @@ export function MktProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready) return
     const handle = setTimeout(() => {
-      void idbSet('project', { format, slides } satisfies Project)
+      void idbSet('project', { format, slides, song } satisfies Project)
     }, 200)
     return () => clearTimeout(handle)
-  }, [ready, format, slides])
+  }, [ready, format, slides, song])
 
   useEffect(() => {
     const total = totalDuration(slides)
@@ -184,6 +197,7 @@ export function MktProvider({ children }: { children: ReactNode }) {
     clearImageCache()
     await idbClear()
     setSlides([])
+    setSong(null)
     setUrls({})
     setSelectedId(null)
     setPlaying(false)
@@ -304,23 +318,34 @@ export function MktProvider({ children }: { children: ReactNode }) {
     })
   }
 
+  const placeElement = (slideId: string, kind: ElementKind, at: number) => {
+    const slide = slidesRef.current.find((item) => item.id === slideId)
+    if (!slide) return
+    const clamped = Math.round(Math.max(0, Math.min(slide.duration, at)) * 10) / 10
+    setTool('focus')
+    addOverlay(slideId, makeOverlay(kind, clamped))
+    let start = 0
+    for (const item of slidesRef.current) {
+      if (item.id === slideId) break
+      start += item.duration
+    }
+    setPlaying(false)
+    setTime(start + clamped)
+  }
+
   const addText = () => {
-    if (!current) return
-    addOverlay(current.id, {
-      id: uid(),
-      kind: 'text',
-      text: 'Your text',
-      x: 0.5,
-      y: 0.2,
-      fontSize: 0.042,
-      style: 'mata',
-    })
+    if (current) placeElement(current.id, 'text', here.local)
+  }
+
+  const addCursor = () => {
+    if (current) placeElement(current.id, 'cursor', here.local)
   }
 
   const api: MktApi = {
     ready,
     format,
     slides,
+    song,
     urls,
     time,
     playing,
@@ -344,8 +369,13 @@ export function MktProvider({ children }: { children: ReactNode }) {
     duplicateSlide,
     reorder,
     seekSlide,
+    tool,
+    setTool,
     applyZoomIn,
     addText,
+    addCursor,
+    placeElement,
+    setSong,
     setExportOpen,
   }
 

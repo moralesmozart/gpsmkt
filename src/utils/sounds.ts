@@ -1,30 +1,24 @@
 import type { Slide } from '../types/project'
 
 /**
- * Built-in audio, all CC0 from Kenney (www.kenney.nl):
- * interface taps, plus ten short jingles used as the step songs.
+ * Interface taps are Kenney CC0 (www.kenney.nl).
+ * Piano beds are CC0 from OpenGameArt: Piano loop by frosty ham,
+ * Soft emotional by Tozan, Bedazzled by Kistol.
  */
 export const SONGS: { id: string; label: string }[] = [
-  { id: 'pop', label: 'Pop' },
-  { id: 'bounce', label: 'Bounce' },
-  { id: 'spark', label: 'Spark' },
-  { id: 'glow', label: 'Glow' },
-  { id: 'cheer', label: 'Cheer' },
-  { id: 'win', label: 'Win' },
-  { id: 'coin', label: 'Coin' },
-  { id: 'jump', label: 'Jump' },
-  { id: 'quest', label: 'Quest' },
-  { id: 'pixel', label: 'Pixel' },
+  { id: 'piano', label: 'Piano loop' },
+  { id: 'soft', label: 'Soft' },
+  { id: 'bedazzled', label: 'Bedazzled' },
 ]
 
 const FILES: Record<string, string> = {
   tap: 'sounds/tap.wav',
-  move: 'sounds/move.wav',
   done: 'sounds/done.wav',
-  ...Object.fromEntries(SONGS.map((song) => [song.id, `sounds/${song.id}.wav`])),
+  ...Object.fromEntries(SONGS.map((song) => [song.id, `sounds/${song.id}.m4a`])),
 }
 
-const LEVEL: Record<string, number> = { tap: 0.45, move: 0.28, done: 0.5 }
+const LEVEL: Record<string, number> = { tap: 0.35, done: 0.4, piano: 0.55, soft: 0.5, bedazzled: 0.5 }
+const SONG_IDS = new Set(SONGS.map((song) => song.id))
 
 export function songLabel(id: string) {
   return SONGS.find((song) => song.id === id)?.label ?? ''
@@ -69,12 +63,11 @@ export async function mixCues(cues: SoundCue[], duration: number) {
     const source = offline.createBufferSource()
     source.buffer = buffer
     const gain = offline.createGain()
-    gain.gain.value = LEVEL[cue.name] ?? 0.7
     source.connect(gain)
     gain.connect(offline.destination)
     const start = Math.max(0, cue.time)
-    source.start(start)
-    if (cue.duration && cue.duration > 0) source.stop(Math.min(duration, start + cue.duration))
+    const span = cue.duration ? Math.max(0, Math.min(duration, start + cue.duration) - start) : undefined
+    arm(source, gain, LEVEL[cue.name] ?? 0.5, start, span, SONG_IDS.has(cue.name))
   }
   if (!mixed) return null
   return offline.startRendering()
@@ -91,7 +84,7 @@ export function stopSounds() {
   live.clear()
 }
 
-/** `duration` cuts the clip off, so a step song does not spill into the next step. */
+/** Songs loop until `duration`, then fade. Effects play once. */
 export function playSound(name: string, at?: number, duration?: number) {
   const audio = ctx
   const buffer = buffers[name]
@@ -99,14 +92,25 @@ export function playSound(name: string, at?: number, duration?: number) {
   const source = audio.createBufferSource()
   source.buffer = buffer
   const gain = audio.createGain()
-  gain.gain.value = LEVEL[name] ?? 0.7
   source.connect(gain)
   gain.connect(audio.destination)
-  const startAt = at ?? audio.currentTime
   source.onended = () => live.delete(source)
   live.add(source)
-  source.start(startAt)
-  if (duration && duration > 0) source.stop(startAt + duration)
+  arm(source, gain, LEVEL[name] ?? 0.5, at ?? audio.currentTime, duration, SONG_IDS.has(name))
+}
+
+function arm(source: AudioBufferSourceNode, gain: GainNode, level: number, start: number, duration: number | undefined, loop: boolean) {
+  gain.gain.setValueAtTime(level, start)
+  if (loop) source.loop = true
+  source.start(start)
+  if (!duration || duration <= 0) return
+  const end = start + duration
+  const fade = Math.min(0.7, duration * 0.3)
+  if (fade > 0.05) {
+    gain.gain.setValueAtTime(level, Math.max(start, end - fade))
+    gain.gain.linearRampToValueAtTime(0.0001, end)
+  }
+  source.stop(end)
 }
 
 export function audioNow() {
@@ -119,21 +123,17 @@ export interface SoundCue {
   duration?: number
 }
 
-/** The step song at the start of each slide, plus the small interface accents. */
-export function soundCues(slides: Slide[]) {
+/** The chosen song covers the whole video, plus the small interface accents. */
+export function soundCues(slides: Slide[], song?: string | null) {
   const cues: SoundCue[] = []
   let acc = 0
-  slides.forEach((slide, index) => {
-    if (slide.song) cues.push({ time: acc, name: slide.song, duration: slide.duration })
+  slides.forEach((slide) => {
     if (slide.overlays.some((overlay) => overlay.kind === 'focus' && overlay.pulse)) {
       cues.push({ time: acc + slide.duration * 0.42, name: 'tap' })
     }
-    if (slides[index + 1] && slide.transition !== 'cut') {
-      const win = Math.min(0.45, slide.duration * 0.45)
-      cues.push({ time: acc + Math.max(0, slide.duration - win), name: 'move' })
-    }
     acc += slide.duration
   })
+  if (song && SONG_IDS.has(song) && acc > 0) cues.unshift({ time: 0, name: song, duration: acc })
   if (acc > 0.4) cues.push({ time: Math.max(0, acc - 0.28), name: 'done' })
   return cues
 }

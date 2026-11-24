@@ -28,7 +28,7 @@ export function ExportModal({ sound }: { sound: boolean }) {
         const ctx = canvas.getContext('2d', { alpha: false })
         if (!ctx) throw new Error('Canvas is not available.')
         const duration = Math.max(0.5, totalDuration(api.slides))
-        const cues = sound ? soundCues(api.slides) : []
+        const cues = sound ? soundCues(api.slides, api.song) : []
         if (sound) await unlockAudio()
         const result = await exportVideo({
           canvas,
@@ -51,7 +51,7 @@ export function ExportModal({ sound }: { sound: boolean }) {
       controller.abort()
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [api.slides, api.urls, api.format, sound])
+  }, [api.slides, api.urls, api.format, api.song, sound])
 
   const download = () => {
     if (!url) return

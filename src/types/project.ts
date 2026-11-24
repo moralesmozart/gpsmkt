@@ -19,6 +19,8 @@ export interface FocusOverlay {
   pulse: boolean
   /** null hides the numbered badge. */
   step: number | null
+  /** Seconds into this step before it shows. */
+  at?: number
 }
 
 export interface TextOverlay {
@@ -31,9 +33,102 @@ export interface TextOverlay {
   /** Fraction of the frame height. */
   fontSize: number
   style: TextStyleId
+  /** Seconds into this step before it shows. */
+  at?: number
 }
 
-export type Overlay = FocusOverlay | TextOverlay
+export interface CursorOverlay {
+  id: string
+  kind: 'cursor'
+  /** 0–1 of the screenshot. Where the finger taps. */
+  x: number
+  y: number
+  click: boolean
+  step: number | null
+  /** Seconds into this step before it shows. */
+  at?: number
+}
+
+export interface FireworkOverlay {
+  id: string
+  kind: 'firework'
+  /** 0–1 of the video frame. */
+  x: number
+  y: number
+  /** 1 is the usual burst. Larger fills more of the frame. */
+  size?: number
+  /** Seconds into this step before it bursts. */
+  at?: number
+}
+
+export type Overlay = FocusOverlay | TextOverlay | CursorOverlay | FireworkOverlay
+export type ElementKind = Overlay['kind']
+
+export function makeOverlay(kind: ElementKind, at = 0): Overlay {
+  const id = uid()
+  if (kind === 'text') {
+    return { id, kind, text: 'Your text', x: 0.5, y: 0.2, fontSize: 0.042, style: 'mata', at }
+  }
+  if (kind === 'cursor') {
+    return { id, kind, x: 0.62, y: 0.58, click: true, step: null, at }
+  }
+  if (kind === 'firework') {
+    return { id, kind, x: 0.5, y: 0.36, size: 1, at }
+  }
+  return {
+    id,
+    kind: 'focus',
+    shape: 'rect',
+    x: 0.28,
+    y: 0.34,
+    w: 0.44,
+    h: 0.22,
+    motion: 'static',
+    spotlight: true,
+    pulse: false,
+    step: null,
+    at,
+  }
+}
+
+export const ELEMENT_MIME = 'application/x-gps-element'
+
+export function elementDragData(kind: ElementKind) {
+  return `gps-element:${kind}`
+}
+
+export function writeElementDrag(data: DataTransfer, kind: ElementKind) {
+  data.setData(ELEMENT_MIME, kind)
+  data.setData('text/plain', elementDragData(kind))
+  data.effectAllowed = 'copy'
+}
+
+export function isElementDrag(data: DataTransfer) {
+  return [...data.types].includes(ELEMENT_MIME)
+}
+
+export function readElementTransfer(data: DataTransfer): ElementKind | null {
+  const custom = data.getData(ELEMENT_MIME)
+  if (custom === 'text' || custom === 'cursor' || custom === 'focus' || custom === 'firework') return custom
+  return readElementDrag(data.getData('text/plain'))
+}
+
+export function readElementDrag(data: string): ElementKind | null {
+  if (!data.startsWith('gps-element:')) return null
+  const kind = data.slice('gps-element:'.length)
+  if (kind === 'text' || kind === 'cursor' || kind === 'focus' || kind === 'firework') return kind
+  return null
+}
+
+export function overlayLabel(overlay: Overlay) {
+  if (overlay.kind === 'text') return overlay.text || 'Text'
+  if (overlay.kind === 'cursor') return 'Finger'
+  if (overlay.kind === 'firework') return 'Firework'
+  return 'Focus'
+}
+
+export type FrameFit = 'contain' | 'cover'
+export type Tool = 'focus' | 'fit' | 'cursor'
 
 export interface Slide {
   id: string
@@ -42,13 +137,20 @@ export interface Slide {
   background: BgFill
   transition: TransitionKind
   overlays: Overlay[]
-  /** Id from the built-in song library. Empty means this step is silent. */
-  song?: string | null
+  /** contain shows the whole screenshot. cover fills the frame. */
+  fit?: FrameFit
+  /** Extra zoom on top of the fit. 1 is the natural size for that fit. */
+  zoom?: number
+  /** -1 to 1. 0 keeps the screenshot centered. */
+  panX?: number
+  panY?: number
 }
 
 export interface Project {
   format: FormatId
   slides: Slide[]
+  /** One song for the whole video. Empty means silent. */
+  song?: string | null
 }
 
 export const FORMATS: Record<FormatId, { label: string; ratio: string; w: number; h: number }> = {

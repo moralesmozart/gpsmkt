@@ -9,4 +9,4 @@ npm run dev
 
 Published at https://moralesmozart.github.io/gpsmkt/ from the `main` branch.
 
-Sounds and the ten step songs are Kenney's CC0 packs (www.kenney.nl).
+Interface taps are Kenney's CC0 pack (www.kenney.nl). The piano beds are CC0 tracks from OpenGameArt: Piano loop by frosty ham, Soft emotional by Tozan, Bedazzled by Kistol.

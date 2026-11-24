@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { layoutSlide, renderFrame, screenToImage, type Box } from '../utils/canvasRenderer'
-import { FORMATS, uid, type FocusOverlay } from '../types/project'
+import { FORMATS, type FocusOverlay } from '../types/project'
 import { useMkt } from '../store'
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se'
@@ -13,15 +13,35 @@ export function StageCanvas() {
     apiRef.current = api
   })
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [viewport, setViewport] = useState({ w: window.innerWidth, h: window.innerHeight })
+  const slotRef = useRef<HTMLDivElement>(null)
+  const gestureRef = useRef<HTMLDivElement>(null)
+  const [slot, setSlot] = useState({ w: 0, h: 0 })
   const [fontsReady, setFontsReady] = useState(false)
   const [pixels, setPixels] = useState({ w: 0, h: 0 })
   const [images, setImages] = useState<Map<string, HTMLImageElement>>(new Map())
 
   useEffect(() => {
-    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight })
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    const el = gestureRef.current
+    if (!el) return
+    const onWheel = (event: WheelEvent) => {
+      const live = apiRef.current
+      if (live.tool !== 'fit' || !live.current || live.playing) return
+      event.preventDefault()
+      const zoom = clamp((live.current.zoom ?? 1) * (event.deltaY < 0 ? 1.06 : 0.94), 0.6, 3)
+      live.updateSlide(live.current.id, { zoom, fit: live.current.fit ?? 'contain' })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  useEffect(() => {
+    const el = slotRef.current
+    if (!el) return
+    const measure = () => setSlot({ w: el.clientWidth, h: el.clientHeight })
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [])
 
   useEffect(() => {
@@ -59,13 +79,14 @@ export function StageCanvas() {
   }, [api.slides, api.urls])
 
   const format = FORMATS[api.format]
-  const maxW = Math.max(220, Math.min(420, viewport.w - 360))
-  const maxH = Math.max(240, Math.min(440, viewport.h - 420))
-  let frameW = maxH * (format.w / format.h)
-  let frameH = maxH
-  if (frameW > maxW) {
-    frameW = maxW
-    frameH = maxW * (format.h / format.w)
+  const availW = Math.max(180, slot.w - 8)
+  const availH = Math.max(180, slot.h - 56)
+  const ratio = format.w / format.h
+  let frameW = availH * ratio
+  let frameH = availH
+  if (frameW > availW) {
+    frameW = availW
+    frameH = availW / ratio
   }
 
   const current = api.current
@@ -84,14 +105,14 @@ export function StageCanvas() {
     }
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    renderFrame(ctx, { slides: api.slides, images, time: api.time, w: canvas.width, h: canvas.height })
+    renderFrame(ctx, { slides: api.slides, images, time: api.time, w: canvas.width, h: canvas.height, editing: !api.playing })
   }, [api.slides, api.time, images, frameW, frameH, fontsReady, api.format])
 
   const layout = (() => {
     if (!current || !pixels.w) return null
     const placed = api.slides[api.currentIndex]
     if (!placed) return null
-    return layoutSlide(placed, image, progressOf(api.slides, api.currentIndex, api.time), pixels.w, pixels.h)
+    return layoutSlide(placed, image, progressOf(api.slides, api.currentIndex, api.time), pixels.w, pixels.h, !api.playing)
   })()
 
   const selected = current?.overlays.find((overlay) => overlay.id === api.selectedId) ?? null
@@ -109,10 +130,41 @@ export function StageCanvas() {
       progressOf(api.slides, api.currentIndex, api.time),
       canvas.width,
       canvas.height,
+      !api.playing,
     )
     const boxes = live.boxes
-    const hit = [...boxes].reverse().find((item) => contains(item.box, point.x, point.y, 0))
+
+    if (api.tool === 'fit') {
+      const start = { x: current.panX ?? 0, y: current.panY ?? 0 }
+      const rangeX = Math.max(80, Math.abs(live.fit.dw - canvas.width))
+      const rangeY = Math.max(80, Math.abs(live.fit.dh - canvas.height))
+      track(event, (px, py) => {
+        apiRef.current.updateSlide(current.id, {
+          panX: clamp(start.x + ((px - point.x) * 2) / rangeX, -1, 1),
+          panY: clamp(start.y + ((py - point.y) * 2) / rangeY, -1, 1),
+          fit: current.fit ?? 'contain',
+          zoom: current.zoom ?? 1,
+        })
+      })
+      return
+    }
+
+    const hit = [...boxes].reverse().find((item) => contains(item.box, point.x, point.y, 16))
     const handle = selectedBox ? hitCorner(selectedBox, point.x, point.y, Math.max(18, canvas.width * 0.02)) : null
+
+    if (handle && selected?.kind === 'firework') {
+      const effect = selected
+      const centerX = effect.x * canvas.width
+      const centerY = effect.y * canvas.height
+      const startDist = Math.max(20, Math.hypot(point.x - centerX, point.y - centerY))
+      const startSize = effect.size ?? 1
+      api.selectOverlay(effect.id)
+      track(event, (px, py) => {
+        const dist = Math.hypot(px - centerX, py - centerY)
+        apiRef.current.updateOverlay(current.id, effect.id, { size: clamp((startSize * dist) / startDist, 0.4, 2.4) })
+      })
+      return
+    }
 
     if (handle && selected?.kind === 'focus') {
       const focus = selected
@@ -130,8 +182,11 @@ export function StageCanvas() {
       if (!overlay) return
       api.selectOverlay(overlay.id)
       const start = { ...overlay }
+      let moved = false
       track(event, (px, py) => {
-        if (start.kind === 'focus') {
+        if (!moved && Math.hypot(px - point.x, py - point.y) < 5) return
+        moved = true
+        if (start.kind === 'focus' || start.kind === 'cursor') {
           const from = screenToImage(point.x, point.y, live.fit, live.cam, canvas.width, canvas.height)
           const to = screenToImage(px, py, live.fit, live.cam, canvas.width, canvas.height)
           apiRef.current.updateOverlay(current.id, start.id, {
@@ -149,47 +204,31 @@ export function StageCanvas() {
     }
 
     api.selectOverlay(null)
-    const origin = screenToImage(point.x, point.y, live.fit, live.cam, canvas.width, canvas.height)
-    const id = uid()
-    const created: FocusOverlay = {
-      id,
-      kind: 'focus',
-      shape: 'rect',
-      x: origin.x,
-      y: origin.y,
-      w: 0.02,
-      h: 0.02,
-      motion: 'static',
-      spotlight: false,
-      pulse: false,
-      step: current.overlays.filter((item) => item.kind === 'focus').length + 1,
-    }
-    api.addOverlay(current.id, created)
-    let drew = false
-    track(event, (px, py) => {
-      const spot = screenToImage(px, py, live.fit, live.cam, canvas.width, canvas.height)
-      const box = clampBox(origin.x, origin.y, spot.x, spot.y)
-      if (box.w > 0.03 || box.h > 0.03) drew = true
-      apiRef.current.updateOverlay(current.id, id, box)
-    }, () => {
-      if (!drew) apiRef.current.removeOverlay(current.id, id)
-    })
   }
 
   return (
-    <div className="flex flex-col items-center justify-center">
+    <div ref={slotRef} className="flex h-full w-full flex-col items-center justify-center">
       <div className="relative rounded-3xl bg-white shadow-card" style={{ width: frameW, height: frameH }}>
         <canvas ref={canvasRef} className="block h-full w-full rounded-3xl" />
-        <div className="absolute inset-0 touch-none" onPointerDown={onPointerDown}>
-          {selectedBox && !api.playing && pixels.w > 0 && (
-            <Selection box={selectedBox} width={pixels.w} height={pixels.h} onDelete={() => current && api.removeOverlay(current.id, selected!.id)} />
-          )}
+        <div ref={gestureRef} className="absolute inset-0 touch-none" onPointerDown={onPointerDown}>
+          {selectedBox && !api.playing && pixels.w > 0 &&
+            (selected?.kind === 'focus' || selected?.kind === 'firework' ? (
+              <Selection box={selectedBox} width={pixels.w} height={pixels.h} onDelete={() => current && api.removeOverlay(current.id, selected.id)} />
+            ) : (
+              <div
+                className="pointer-events-none absolute rounded-2xl ring-2 ring-ink"
+                style={{
+                  left: `${(selectedBox.x / pixels.w) * 100}%`,
+                  top: `${(selectedBox.y / pixels.h) * 100}%`,
+                  width: `${(selectedBox.w / pixels.w) * 100}%`,
+                  height: `${(selectedBox.h / pixels.h) * 100}%`,
+                }}
+              />
+            ))}
         </div>
       </div>
-      {!api.selectedId && !api.playing && (
-        <p className="mt-5 rounded-full bg-ink px-4 py-2 text-sm font-extrabold text-white shadow-pop">
-          Configure on focus selection.
-        </p>
+      {api.tool === 'fit' && !api.playing && (
+        <p className="mt-4 text-sm font-extrabold text-ink-soft">Drag the picture. Scroll to zoom.</p>
       )}
     </div>
   )

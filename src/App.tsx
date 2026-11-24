@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Volume2, VolumeX } from 'lucide-react'
 import { FORMAT_ORDER, FORMATS } from './types/project'
+import { ElementRail } from './components/ElementRail'
 import { ExportModal } from './components/ExportModal'
 import { InspectorPanel } from './components/InspectorPanel'
 import { Logo } from './components/Logo'
@@ -31,12 +32,14 @@ function Shell() {
   timeRef.current = api.time
   const slidesRef = useRef(api.slides)
   slidesRef.current = api.slides
+  const songRef = useRef(api.song)
+  songRef.current = api.song
 
   useEffect(() => {
     if (!api.playing || !sound) return
     let cancel = false
     const origin = timeRef.current
-    const cues = soundCues(slidesRef.current).filter((cue) => cue.time >= origin - 0.03)
+    const cues = soundCues(slidesRef.current, songRef.current).filter((cue) => cue.time >= origin - 0.03)
     const timers = cues.map((cue) =>
       window.setTimeout(() => {
         if (!cancel) playSound(cue.name, undefined, cue.duration)
@@ -47,7 +50,7 @@ function Shell() {
       timers.forEach((timer) => window.clearTimeout(timer))
       stopSounds()
     }
-  }, [api.playing, sound])
+  }, [api.playing, api.song, sound])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -83,7 +86,7 @@ function Shell() {
       onDrop={(event) => {
         event.preventDefault()
         setOver(false)
-        void api.addFiles([...(event.dataTransfer.files ?? [])])
+        if (event.dataTransfer.files?.length) void api.addFiles([...(event.dataTransfer.files ?? [])])
       }}
     >
       <header className="relative flex items-center justify-between gap-3 px-5 py-4">
@@ -98,6 +101,7 @@ function Shell() {
               className={`rounded-full px-4 py-1.5 text-sm font-extrabold ${api.format === id ? 'bg-ink text-white' : 'bg-areia-100 text-ink-soft'}`}
             >
               {FORMATS[id].label}
+              <span className={api.format === id ? 'text-white/70' : 'text-ink-mute'}> {FORMATS[id].ratio}</span>
             </button>
           ))}
         </div>
@@ -150,7 +154,7 @@ function Shell() {
             onClick={() => api.setFormat(id)}
             className={`rounded-full px-3 py-1 text-xs font-extrabold ${api.format === id ? 'bg-ink text-white' : 'bg-areia-100 text-ink-soft'}`}
           >
-            {FORMATS[id].label}
+            {FORMATS[id].label} {FORMATS[id].ratio}
           </button>
         ))}
       </div>
@@ -159,12 +163,13 @@ function Shell() {
         <Dropzone hot={over} />
       ) : (
         <>
-          <div className="flex min-h-0 flex-1 items-center justify-center px-4">
-            <div className="flex items-center gap-8">
+          <div className="flex min-h-0 flex-1 items-stretch gap-4 px-4">
+            <ElementRail />
+            <div className="min-h-0 min-w-0 flex-1">
               <StageCanvas />
-              <div className="hidden lg:block">
-                <InspectorPanel />
-              </div>
+            </div>
+            <div className="hidden h-full min-h-0 shrink-0 lg:block">
+              <InspectorPanel />
             </div>
           </div>
           <div className="px-4 pb-3 lg:hidden">
