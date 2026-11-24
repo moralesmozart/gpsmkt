@@ -1,5 +1,5 @@
 import type { BgFill, CursorOverlay, FireworkOverlay, FocusOverlay, Overlay, Slide, TextOverlay, TransitionKind } from '../types/project'
-import { slideAt } from '../types/project'
+import { overlaySpan, slideAt } from '../types/project'
 import { textOn } from './textOn'
 import { TEXT_STYLES } from '../types/project'
 
@@ -68,18 +68,32 @@ function focusWorld(focus: FocusOverlay, fit: Fit) {
   }
 }
 
-function visible(at: number | undefined, slide: Slide, progress: number, editing: boolean) {
-  if (editing) return true
-  return progress * slide.duration + 0.03 >= (at ?? 0)
+function active(overlay: { at?: number; end?: number }, slide: Slide, progress: number) {
+  const local = progress * slide.duration
+  const { start, end } = overlaySpan(overlay, slide.duration)
+  return local >= start - 0.03 && local <= end + 0.03
 }
 
-function cameraFor(slide: Slide, fit: Fit, progress: number, w: number, h: number, editing = false): Cam {
+/** 0 outside the window, rises, holds, then falls back to 0 so the picture is plain again. */
+function presence(overlay: { at?: number; end?: number }, duration: number, local: number) {
+  const { start, end } = overlaySpan(overlay, duration)
+  const span = Math.max(0.2, end - start)
+  const u = Math.min(1, Math.max(0, (local - start) / span))
+  const edge = Math.min(0.34, Math.max(0.18, 0.4 / span))
+  if (u < edge) return easeInOutCubic(u / edge)
+  if (u > 1 - edge) return easeInOutCubic((1 - u) / edge)
+  return 1
+}
+
+function cameraFor(slide: Slide, fit: Fit, progress: number, w: number, h: number): Cam {
+  const local = progress * slide.duration
   const driver = slide.overlays.find(
-    (o): o is FocusOverlay => o.kind === 'focus' && o.motion !== 'static' && visible(o.at, slide, progress, editing),
+    (o): o is FocusOverlay => o.kind === 'focus' && o.motion !== 'static' && active(o, slide, progress),
   )
   if (!driver) return { z: 1, anchorX: w / 2, anchorY: h / 2 }
-  const eased = easeInOutCubic(progress)
-  const zoomT = driver.motion === 'zoom-out' ? 1 - eased : eased
+  const { start, end } = overlaySpan(driver, slide.duration)
+  const u = Math.min(1, Math.max(0, (local - start) / Math.max(0.2, end - start)))
+  const zoomT = driver.motion === 'zoom-out' ? 1 - easeInOutCubic(u) : presence(driver, slide.duration, local)
   const world = focusWorld(driver, fit)
   const cx = world.x + world.w / 2
   const cy = world.y + world.h / 2
@@ -103,19 +117,19 @@ function worldToScreen(x: number, y: number, cam: Cam, w: number, h: number) {
 
 export function layoutSlide(slide: Slide, image: HTMLImageElement | null, progress: number, w: number, h: number, editing = false) {
   const fit = fitImage(image, w, h, slide)
-  const cam = cameraFor(slide, fit, progress, w, h, editing)
-  const boxes = slide.overlays.map((overlay) => ({ id: overlay.id, box: overlayBox(overlay, fit, cam, progress, w, h, editing) }))
+  const cam = cameraFor(slide, fit, progress, w, h)
+  const boxes = slide.overlays.map((overlay) => ({ id: overlay.id, box: overlayBox(overlay, fit, cam, progress, w, h, editing, slide.duration) }))
   return { fit, cam, boxes }
 }
 
-function overlayBox(overlay: Overlay, fit: Fit, cam: Cam, progress: number, w: number, h: number, editing: boolean): Box {
+function overlayBox(overlay: Overlay, fit: Fit, cam: Cam, progress: number, w: number, h: number, editing: boolean, duration: number): Box {
   if (overlay.kind === 'focus') {
     const world = focusWorld(overlay, fit)
     const origin = worldToScreen(world.x, world.y, cam, w, h)
     return { x: origin.x, y: origin.y, w: world.w * cam.z, h: world.h * cam.z }
   }
   if (overlay.kind === 'cursor') {
-    const point = cursorPoint(overlay, fit, cam, progress, w, h, editing)
+    const point = cursorPoint(overlay, fit, cam, progress, w, h, editing, duration)
     const size = Math.max(28, w * 0.05)
     return { x: point.x - size * 0.15, y: point.y - size * 0.12, w: size, h: size }
   }
@@ -166,6 +180,7 @@ function renderSlide(
   w: number,
   h: number,
   editing: boolean,
+  selectedId?: string | null,
 ) {
   const { fit, cam, boxes } = layoutSlide(slide, image, progress, w, h, editing)
   ctx.fillStyle = slide.background === 'blur' ? '#FBF5E8' : BG[slide.background]
@@ -185,10 +200,11 @@ function renderSlide(
   }
   ctx.restore()
 
-  const focuses = slide.overlays.filter((o): o is FocusOverlay => o.kind === 'focus' && visible(o.at, slide, progress, editing))
-  const reveal = Math.min(1, progress / 0.22)
-  const spotlight = focuses.filter((f) => f.spotlight)
-  if (spotlight.length && reveal > 0) {
+  const local = progress * slide.duration
+  const shown = (overlay: Overlay) => active(overlay, slide, progress) || (editing && overlay.id === selectedId)
+  const focuses = slide.overlays.filter((o): o is FocusOverlay => o.kind === 'focus' && shown(o))
+  const spotlight = focuses.filter((f) => f.spotlight && active(f, slide, progress))
+  if (spotlight.length) {
     ctx.save()
     ctx.beginPath()
     ctx.rect(0, 0, w, h)
@@ -196,7 +212,8 @@ function renderSlide(
       const box = boxes.find((b) => b.id === focus.id)!.box
       traceShape(ctx, focus, box)
     }
-    ctx.fillStyle = `rgba(27, 42, 58, ${0.65 * reveal})`
+    const dim = Math.max(...spotlight.map((focus) => presence(focus, slide.duration, local)))
+    ctx.fillStyle = `rgba(27, 42, 58, ${0.65 * dim})`
     ctx.fill('evenodd')
     ctx.restore()
   }
@@ -206,29 +223,69 @@ function renderSlide(
     ctx.save()
     ctx.beginPath()
     traceShape(ctx, focus, box)
+    const reveal = active(focus, slide, progress) ? presence(focus, slide.duration, local) : 1
     ctx.strokeStyle = `rgba(255,255,255,${0.4 + 0.6 * reveal})`
     ctx.lineWidth = Math.max(3, w * 0.004)
     ctx.stroke()
     ctx.restore()
 
-    if (focus.pulse) drawPulse(ctx, box, progress)
+    if (focus.pulse && active(focus, slide, progress)) {
+      const { start, end } = overlaySpan(focus, slide.duration)
+      const u = (local - start) / Math.max(0.2, end - start)
+      drawPulse(ctx, box, 0.4 + Math.min(1, Math.max(0, (u - 0.3) / 0.4)) * 0.38)
+    }
     if (focus.step !== null) drawBadge(ctx, box, focus.step, w, reveal)
   }
 
   for (const overlay of slide.overlays) {
-    if (!visible(overlay.at, slide, progress, editing)) continue
+    if (!shown(overlay)) continue
     if (overlay.kind === 'text') drawText(ctx, overlay, w, h)
-    if (overlay.kind === 'cursor') drawCursor(ctx, overlay, fit, cam, progress, w, h, editing)
-    if (overlay.kind === 'firework') drawFirework(ctx, overlay, progress * slide.duration, w, h, editing)
+    if (overlay.kind === 'cursor') drawCursor(ctx, overlay, fit, cam, progress, w, h, editing, slide.duration)
+    if (overlay.kind === 'firework') drawFirework(ctx, overlay, local, w, h, editing)
   }
 }
 
-function cursorPoint(overlay: CursorOverlay, fit: Fit, cam: Cam, progress: number, w: number, h: number, editing: boolean) {
-  const end = worldToScreen(fit.dx + overlay.x * fit.dw, fit.dy + overlay.y * fit.dh, cam, w, h)
-  if (editing) return end
-  const start = { x: end.x + w * 0.07, y: Math.min(h * 0.9, end.y + h * 0.16) }
-  const t = easeInOutCubic(Math.min(1, progress / 0.68))
-  return { x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t }
+function imagePoint(x: number, y: number, fit: Fit, cam: Cam, w: number, h: number) {
+  return worldToScreen(fit.dx + x * fit.dw, fit.dy + y * fit.dh, cam, w, h)
+}
+
+function cursorStroke(overlay: CursorOverlay, fit: Fit, cam: Cam, w: number, h: number) {
+  const raw = overlay.path?.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) ?? []
+  if (raw.length < 2) return null
+  return raw.map((point) => imagePoint(point.x, point.y, fit, cam, w, h))
+}
+
+function pointAlong(points: { x: number; y: number }[], t: number) {
+  const lengths = [0]
+  for (let i = 1; i < points.length; i++) {
+    lengths.push(lengths[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y))
+  }
+  const total = lengths[lengths.length - 1]
+  if (total < 1) return points[points.length - 1]
+  const dist = Math.min(1, Math.max(0, t)) * total
+  for (let i = 1; i < points.length; i++) {
+    if (dist <= lengths[i]) {
+      const span = lengths[i] - lengths[i - 1] || 1
+      const u = (dist - lengths[i - 1]) / span
+      return {
+        x: points[i - 1].x + (points[i].x - points[i - 1].x) * u,
+        y: points[i - 1].y + (points[i].y - points[i - 1].y) * u,
+      }
+    }
+  }
+  return points[points.length - 1]
+}
+
+function cursorPoint(overlay: CursorOverlay, fit: Fit, cam: Cam, progress: number, w: number, h: number, editing: boolean, duration: number) {
+  const stroke = cursorStroke(overlay, fit, cam, w, h)
+  const tip = stroke ? stroke[stroke.length - 1] : imagePoint(overlay.x, overlay.y, fit, cam, w, h)
+  if (editing) return tip
+  const { start, end } = overlaySpan(overlay, duration)
+  const u = (progress * duration - start) / Math.max(0.2, end - start)
+  const travel = easeInOutCubic(Math.min(1, Math.max(0, u) / 0.72))
+  if (stroke) return pointAlong(stroke, travel)
+  const from = { x: tip.x + w * 0.07, y: Math.min(h * 0.9, tip.y + h * 0.16) }
+  return { x: from.x + (tip.x - from.x) * travel, y: from.y + (tip.y - from.y) * travel }
 }
 
 function drawCursor(
@@ -240,29 +297,36 @@ function drawCursor(
   w: number,
   h: number,
   editing: boolean,
+  duration: number,
 ) {
-  const end = worldToScreen(fit.dx + overlay.x * fit.dw, fit.dy + overlay.y * fit.dh, cam, w, h)
-  const point = cursorPoint(overlay, fit, cam, progress, w, h, editing)
+  const point = cursorPoint(overlay, fit, cam, progress, w, h, editing, duration)
   const size = Math.max(26, w * 0.042)
-  const pressing = !editing && overlay.click && progress > 0.7 && progress < 0.9
+  const { start, end: until } = overlaySpan(overlay, duration)
+  const along = (progress * duration - start) / Math.max(0.2, until - start)
+  const pressing = !editing && overlay.click && along > 0.72 && along < 0.9
   if (editing) {
-    const start = { x: end.x + w * 0.07, y: Math.min(h * 0.9, end.y + h * 0.16) }
+    const stroke = cursorStroke(overlay, fit, cam, w, h)
+    const tip = stroke ? stroke[stroke.length - 1] : imagePoint(overlay.x, overlay.y, fit, cam, w, h)
+    const from = stroke?.[0] ?? { x: tip.x + w * 0.07, y: Math.min(h * 0.9, tip.y + h * 0.16) }
     ctx.save()
     ctx.setLineDash([size * 0.18, size * 0.14])
     ctx.strokeStyle = 'rgba(27,42,58,0.45)'
     ctx.lineWidth = Math.max(2, size * 0.06)
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
     ctx.beginPath()
-    ctx.moveTo(start.x, start.y)
-    ctx.lineTo(end.x, end.y)
+    ctx.moveTo(from.x, from.y)
+    if (stroke) stroke.slice(1).forEach((spot) => ctx.lineTo(spot.x, spot.y))
+    else ctx.lineTo(tip.x, tip.y)
     ctx.stroke()
     ctx.restore()
   }
   if (pressing) {
-    const u = (progress - 0.7) / 0.2
+    const u = Math.min(1, Math.max(0, (along - 0.55) / 0.27))
     ctx.save()
     ctx.globalAlpha = 1 - u
     ctx.beginPath()
-    ctx.arc(point.x, point.y, size * (0.35 + u * 0.9), 0, Math.PI * 2)
+    ctx.arc(point.x, point.y, Math.max(1, size * (0.35 + u * 0.9)), 0, Math.PI * 2)
     ctx.strokeStyle = '#2F6BFF'
     ctx.lineWidth = Math.max(3, size * 0.08)
     ctx.stroke()
@@ -357,7 +421,7 @@ function drawPulse(ctx: CanvasRenderingContext2D, box: Box, progress: number) {
   if (u < 0 || u > 1) return
   const cx = box.x + box.w / 2
   const cy = box.y + box.h / 2
-  const radius = Math.min(box.w, box.h) * (0.16 + u * 0.5)
+  const radius = Math.max(1, Math.min(box.w, box.h) * (0.16 + u * 0.5))
   ctx.save()
   ctx.globalAlpha = 1 - u
   ctx.beginPath()
@@ -419,9 +483,9 @@ function transitionOf(slide: Slide, local: number, hasNext: boolean): { kind: Tr
 
 export function renderFrame(
   ctx: CanvasRenderingContext2D,
-  opts: { slides: Slide[]; images: Map<string, HTMLImageElement>; time: number; w: number; h: number; editing?: boolean },
+  opts: { slides: Slide[]; images: Map<string, HTMLImageElement>; time: number; w: number; h: number; editing?: boolean; selectedId?: string | null },
 ) {
-  const { slides, images, time, w, h, editing = false } = opts
+  const { slides, images, time, w, h, editing = false, selectedId = null } = opts
   ctx.clearRect(0, 0, w, h)
   if (!slides.length || w < 2 || h < 2) {
     ctx.fillStyle = '#FFFCF5'
@@ -435,13 +499,13 @@ export function renderFrame(
   const image = images.get(slide.imageId) ?? null
 
   if (!blend || !next) {
-    renderSlide(ctx, slide, image, here.progress, w, h, editing)
+    renderSlide(ctx, slide, image, here.progress, w, h, editing, selectedId)
     return
   }
 
   const nextImage = images.get(next.imageId) ?? null
   if (blend.kind === 'fade') {
-    renderSlide(ctx, slide, image, here.progress, w, h, editing)
+    renderSlide(ctx, slide, image, here.progress, w, h, editing, selectedId)
     ctx.save()
     ctx.globalAlpha = blend.p
     renderSlide(ctx, next, nextImage, 0, w, h, editing)
@@ -451,7 +515,7 @@ export function renderFrame(
 
   ctx.save()
   ctx.translate(-blend.p * w, 0)
-  renderSlide(ctx, slide, image, here.progress, w, h, editing)
+  renderSlide(ctx, slide, image, here.progress, w, h, editing, selectedId)
   ctx.restore()
   ctx.save()
   ctx.translate((1 - blend.p) * w, 0)

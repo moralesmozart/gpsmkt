@@ -21,6 +21,8 @@ export interface FocusOverlay {
   step: number | null
   /** Seconds into this step before it shows. */
   at?: number
+  /** Seconds into this step when it leaves. Missing means the end of the step. */
+  end?: number
 }
 
 export interface TextOverlay {
@@ -35,6 +37,8 @@ export interface TextOverlay {
   style: TextStyleId
   /** Seconds into this step before it shows. */
   at?: number
+  /** Seconds into this step when it leaves. Missing means the end of the step. */
+  end?: number
 }
 
 export interface CursorOverlay {
@@ -43,10 +47,14 @@ export interface CursorOverlay {
   /** 0–1 of the screenshot. Where the finger taps. */
   x: number
   y: number
+  /** Drawn stroke in screenshot space. The last point is the tap. */
+  path?: { x: number; y: number }[]
   click: boolean
   step: number | null
   /** Seconds into this step before it shows. */
   at?: number
+  /** Seconds into this step when it leaves. Missing means the end of the step. */
+  end?: number
 }
 
 export interface FireworkOverlay {
@@ -59,21 +67,29 @@ export interface FireworkOverlay {
   size?: number
   /** Seconds into this step before it bursts. */
   at?: number
+  /** Seconds into this step when it leaves. Missing means the end of the step. */
+  end?: number
 }
 
 export type Overlay = FocusOverlay | TextOverlay | CursorOverlay | FireworkOverlay
 export type ElementKind = Overlay['kind']
 
-export function makeOverlay(kind: ElementKind, at = 0): Overlay {
+export function overlaySpan(overlay: { at?: number; end?: number }, duration: number) {
+  const start = Math.min(duration, Math.max(0, overlay.at ?? 0))
+  const end = Math.min(duration, Math.max(start + 0.2, overlay.end ?? duration))
+  return { start, end }
+}
+
+export function makeOverlay(kind: ElementKind, at = 0, end?: number): Overlay {
   const id = uid()
   if (kind === 'text') {
-    return { id, kind, text: 'Your text', x: 0.5, y: 0.2, fontSize: 0.042, style: 'mata', at }
+    return { id, kind, text: 'Your text', x: 0.5, y: 0.2, fontSize: 0.042, style: 'mata', at, end }
   }
   if (kind === 'cursor') {
-    return { id, kind, x: 0.62, y: 0.58, click: true, step: null, at }
+    return { id, kind, x: 0.62, y: 0.58, click: true, step: null, at, end }
   }
   if (kind === 'firework') {
-    return { id, kind, x: 0.5, y: 0.36, size: 1, at }
+    return { id, kind, x: 0.5, y: 0.36, size: 1, at, end }
   }
   return {
     id,
@@ -88,6 +104,7 @@ export function makeOverlay(kind: ElementKind, at = 0): Overlay {
     pulse: false,
     step: null,
     at,
+    end,
   }
 }
 

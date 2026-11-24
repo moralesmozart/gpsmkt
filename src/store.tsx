@@ -326,8 +326,10 @@ export function MktProvider({ children }: { children: ReactNode }) {
     const slide = slidesRef.current.find((item) => item.id === slideId)
     if (!slide) return
     const clamped = Math.round(Math.max(0, Math.min(slide.duration, at)) * 10) / 10
+    const length = Math.min(1.5, Math.max(0.8, slide.duration - clamped))
+    const end = Math.round(Math.min(slide.duration, clamped + length) * 10) / 10
     setTool('focus')
-    addOverlay(slideId, makeOverlay(kind, clamped))
+    addOverlay(slideId, makeOverlay(kind, clamped, end))
     let start = 0
     for (const item of slidesRef.current) {
       if (item.id === slideId) break

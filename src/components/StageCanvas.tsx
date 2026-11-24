@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
-import { layoutSlide, renderFrame, screenToImage, type Box } from '../utils/canvasRenderer'
-import { FORMATS, type FocusOverlay } from '../types/project'
+import type { MutableRefObject, PointerEvent as ReactPointerEvent } from 'react'
+import { layoutSlide, renderFrame, screenToImage, type Box, type Cam, type Fit } from '../utils/canvasRenderer'
+import { FORMATS, type CursorOverlay, type FocusOverlay } from '../types/project'
 import { useMkt } from '../store'
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se'
@@ -105,7 +105,11 @@ export function StageCanvas() {
     }
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    renderFrame(ctx, { slides: api.slides, images, time: api.time, w: canvas.width, h: canvas.height, editing: !api.playing })
+    try {
+      renderFrame(ctx, { slides: api.slides, images, time: api.time, w: canvas.width, h: canvas.height, editing: !api.playing, selectedId: api.selectedId })
+    } catch (error) {
+      console.error(error)
+    }
   }, [api.slides, api.time, images, frameW, frameH, fontsReady, api.format])
 
   const layout = (() => {
@@ -177,7 +181,7 @@ export function StageCanvas() {
       return
     }
 
-    if (hit) {
+    if (hit && !(selected?.kind === 'cursor' && hit.id !== selected.id)) {
       const overlay = current.overlays.find((item) => item.id === hit.id)
       if (!overlay) return
       api.selectOverlay(overlay.id)
@@ -189,9 +193,14 @@ export function StageCanvas() {
         if (start.kind === 'focus' || start.kind === 'cursor') {
           const from = screenToImage(point.x, point.y, live.fit, live.cam, canvas.width, canvas.height)
           const to = screenToImage(px, py, live.fit, live.cam, canvas.width, canvas.height)
+          const dx = to.x - from.x
+          const dy = to.y - from.y
           apiRef.current.updateOverlay(current.id, start.id, {
-            x: start.x + (to.x - from.x),
-            y: start.y + (to.y - from.y),
+            x: start.x + dx,
+            y: start.y + dy,
+            ...(start.kind === 'cursor' && start.path
+              ? { path: start.path.map((spot) => ({ x: spot.x + dx, y: spot.y + dy })) }
+              : {}),
           })
         } else {
           apiRef.current.updateOverlay(current.id, start.id, {
@@ -200,6 +209,11 @@ export function StageCanvas() {
           })
         }
       })
+      return
+    }
+
+    if (selected?.kind === 'cursor') {
+      drawFingerPath(event, point, canvas, live, current.id, selected, apiRef)
       return
     }
 
@@ -229,6 +243,9 @@ export function StageCanvas() {
       </div>
       {api.tool === 'fit' && !api.playing && (
         <p className="mt-4 text-sm font-extrabold text-ink-soft">Drag the picture. Scroll to zoom.</p>
+      )}
+      {selected?.kind === 'cursor' && !api.playing && api.tool !== 'fit' && (
+        <p className="mt-4 text-sm font-extrabold text-ink-soft">Draw the finger’s path on the picture.</p>
       )}
     </div>
   )
@@ -264,6 +281,43 @@ function Selection({ box, width: frameW, height: frameH, onDelete }: { box: Box;
       ))}
     </div>
   )
+}
+
+function drawFingerPath(
+  event: ReactPointerEvent,
+  point: { x: number; y: number },
+  canvas: HTMLCanvasElement,
+  live: { fit: Fit; cam: Cam },
+  slideId: string,
+  cursor: CursorOverlay,
+  apiRef: MutableRefObject<ReturnType<typeof useMkt>>,
+) {
+  const points: { x: number; y: number }[] = []
+  const previous = { path: cursor.path, x: cursor.x, y: cursor.y }
+  const spotOf = (x: number, y: number) => {
+    const spot = screenToImage(x, y, live.fit, live.cam, canvas.width, canvas.height)
+    return { x: clamp(spot.x, 0.02, 0.98), y: clamp(spot.y, 0.02, 0.98) }
+  }
+  const push = (x: number, y: number) => {
+    const next = spotOf(x, y)
+    const last = points[points.length - 1]
+    if (last && Math.hypot(last.x - next.x, last.y - next.y) < 0.012) return
+    if (points.length >= 36) return
+    points.push(next)
+    const end = points[points.length - 1]
+    apiRef.current.updateOverlay(slideId, cursor.id, { path: points.map((spot) => ({ ...spot })), x: end.x, y: end.y })
+  }
+  push(point.x, point.y)
+  track(event, push, () => {
+    const length = points.reduce((sum, spot, index) => {
+      if (!index) return 0
+      return sum + Math.hypot(spot.x - points[index - 1].x, spot.y - points[index - 1].y)
+    }, 0)
+    if (points.length < 2 || length < 0.03) {
+      apiRef.current.updateOverlay(slideId, cursor.id, previous)
+      apiRef.current.selectOverlay(null)
+    }
+  })
 }
 
 function track(start: ReactPointerEvent, move: (x: number, y: number) => void, done?: () => void) {

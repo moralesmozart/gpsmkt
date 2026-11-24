@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Copy, Music, Pause, Play, Plus, Trash2 } from 'lucide-react'
-import { BACKGROUNDS, TRANSITIONS, isElementDrag, overlayLabel, readElementTransfer, slideName, totalDuration, type ElementKind, type Overlay } from '../types/project'
+import { BACKGROUNDS, TRANSITIONS, isElementDrag, overlayLabel, overlaySpan, readElementTransfer, slideName, totalDuration, type ElementKind, type Overlay } from '../types/project'
 import { useMkt } from '../store'
 import { playSound, SONGS, songLabel, stopSounds, unlockAudio } from '../utils/sounds'
 
@@ -249,17 +249,16 @@ function ElementsLane({ total }: { total: number }) {
     const slideStart = start
     start += slide.duration
     return slide.overlays.map((overlay) => {
-      const at = overlay.at ?? 0
-      const span = Math.min(1.8, Math.max(0.6, slide.duration - at))
+      const { start: at, end } = overlaySpan(overlay, slide.duration)
       return {
         slideId: slide.id,
         slideStart,
         duration: slide.duration,
         overlay,
         from: slideStart + at,
-        to: slideStart + at + span,
+        to: slideStart + end,
         left: ((slideStart + at) / total) * 100,
-        width: Math.max(8, (span / total) * 100),
+        width: Math.max(4, ((end - at) / total) * 100),
       }
     })
   })
@@ -324,11 +323,13 @@ function ElementsLane({ total }: { total: number }) {
             const rect = lane.getBoundingClientRect()
             api.selectOverlay(chip.overlay.id)
             api.setPlaying(false)
-            api.setTime(chip.slideStart + (chip.overlay.at ?? 0))
+            const span = overlaySpan(chip.overlay, chip.duration)
+            const length = span.end - span.start
+            api.setTime(chip.slideStart + span.start)
             const move = (ev: PointerEvent) => {
               const abs = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width)) * total
-              const at = Math.round(Math.max(0, Math.min(chip.duration, abs - chip.slideStart)) * 10) / 10
-              api.updateOverlay(chip.slideId, chip.overlay.id, { at })
+              const at = Math.round(Math.max(0, Math.min(chip.duration - length, abs - chip.slideStart)) * 10) / 10
+              api.updateOverlay(chip.slideId, chip.overlay.id, { at, end: Math.round((at + length) * 10) / 10 })
               api.setTime(chip.slideStart + at)
             }
             const up = () => {

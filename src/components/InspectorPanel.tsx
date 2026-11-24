@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { MOTIONS, TEXT_STYLES, overlayLabel, type CursorOverlay, type FireworkOverlay, type FocusOverlay, type Overlay, type TextOverlay, type TextStyleId } from '../types/project'
+import { MOTIONS, TEXT_STYLES, overlayLabel, overlaySpan, type CursorOverlay, type FireworkOverlay, type FocusOverlay, type Overlay, type TextOverlay, type TextStyleId } from '../types/project'
 import { textOn } from '../utils/textOn'
 import { useMkt } from '../store'
 
@@ -35,7 +35,7 @@ function Elements({ overlays, selectedId }: { slideId: string; overlays: Overlay
             className={`flex w-full items-center justify-between rounded-2xl px-2.5 py-2 text-left ${selectedId === overlay.id ? 'bg-areia-100' : 'hover:bg-areia-50'}`}
           >
             <span className="truncate text-sm font-extrabold">{overlayLabel(overlay)}</span>
-            <span className="shrink-0 text-[11px] font-bold text-ink-mute">{(overlay.at ?? 0).toFixed(1)}s</span>
+            <span className="shrink-0 text-[11px] font-bold text-ink-mute">{spanLabel(overlay, api.slides.find((slide) => slide.overlays.some((item) => item.id === overlay.id))?.duration ?? 3)}</span>
           </button>
         ))}
       </div>
@@ -80,7 +80,15 @@ function CursorSettings({ slideId, cursor }: { slideId: string; cursor: CursorOv
   const patch = (next: Partial<CursorOverlay>) => api.updateOverlay(slideId, cursor.id, next)
   return (
     <div className="mt-1 space-y-3 border-t border-areia-200 px-1.5 py-3">
-      <Appears slideId={slideId} at={cursor.at ?? 0} onChange={(at) => patch({ at })} />
+      <Timing slideId={slideId} at={cursor.at ?? 0} end={cursor.end} onChange={patch} />
+      <p className="px-1 text-xs font-bold text-ink-mute">
+        {cursor.path && cursor.path.length > 1 ? 'Path drawn. Draw again to replace it.' : 'Draw on the picture to set where the finger moves.'}
+      </p>
+      {cursor.path && cursor.path.length > 1 && (
+        <button type="button" onClick={() => patch({ path: undefined })} className="px-1 text-sm font-extrabold text-ink-soft">
+          Clear path
+        </button>
+      )}
       <Toggle label="Tap" on={cursor.click} onClick={() => patch({ click: !cursor.click })} />
       <Toggle label="Step" on={cursor.step !== null} onClick={() => patch({ step: cursor.step === null ? 1 : null })} />
       {cursor.step !== null && (
@@ -105,7 +113,7 @@ function FocusSettings({ slideId, focus }: { slideId: string; focus: FocusOverla
   const patch = (next: Partial<FocusOverlay>) => api.updateOverlay(slideId, focus.id, next)
   return (
     <div className="mt-1 space-y-3 border-t border-areia-200 px-1.5 py-3">
-      <Appears slideId={slideId} at={focus.at ?? 0} onChange={(at) => patch({ at })} />
+      <Timing slideId={slideId} at={focus.at ?? 0} end={focus.end} onChange={patch} />
       <Field label="Motion">
         <div className="flex flex-wrap gap-1">
           {MOTIONS.map((motion) => (
@@ -150,7 +158,7 @@ function TextSettings({ slideId, text }: { slideId: string; text: TextOverlay })
   const patch = (next: Partial<TextOverlay>) => api.updateOverlay(slideId, text.id, next)
   return (
     <div className="mt-1 space-y-3 border-t border-areia-200 px-1.5 py-3">
-      <Appears slideId={slideId} at={text.at ?? 0} onChange={(at) => patch({ at })} />
+      <Timing slideId={slideId} at={text.at ?? 0} end={text.end} onChange={patch} />
       <input
         autoFocus
         value={text.text}
@@ -192,7 +200,7 @@ function FireworkSettings({ slideId, effect }: { slideId: string; effect: Firewo
   const api = useMkt()
   return (
     <div className="mt-1 space-y-3 border-t border-areia-200 px-1.5 py-3">
-      <Appears slideId={slideId} at={effect.at ?? 0} onChange={(at) => api.updateOverlay(slideId, effect.id, { at })} />
+      <Timing slideId={slideId} at={effect.at ?? 0} end={effect.end} onChange={(next) => api.updateOverlay(slideId, effect.id, next)} />
       <Field label="Size">
         <input
           type="range"
@@ -212,27 +220,63 @@ function FireworkSettings({ slideId, effect }: { slideId: string; effect: Firewo
   )
 }
 
-function Appears({ slideId, at, onChange }: { slideId: string; at: number; onChange: (at: number) => void }) {
+function spanLabel(overlay: { at?: number; end?: number }, duration: number) {
+  const { start, end } = overlaySpan(overlay, duration)
+  return `${start.toFixed(1)}–${end.toFixed(1)}s`
+}
+
+function Timing({
+  slideId,
+  at,
+  end,
+  onChange,
+}: {
+  slideId: string
+  at: number
+  end?: number
+  onChange: (next: { at?: number; end?: number }) => void
+}) {
   const api = useMkt()
   const duration = api.slides.find((slide) => slide.id === slideId)?.duration ?? 3
+  const { start, end: finish } = overlaySpan({ at, end }, duration)
+  const seek = (local: number) => {
+    const origin = api.slides.slice(0, api.slides.findIndex((slide) => slide.id === slideId)).reduce((sum, slide) => sum + slide.duration, 0)
+    api.setPlaying(false)
+    api.setTime(origin + local)
+  }
   return (
-    <Field label={`Appears at ${at.toFixed(1)}s`}>
-      <input
-        type="range"
-        min={0}
-        max={duration}
-        step={0.1}
-        value={Math.min(at, duration)}
-        onChange={(event) => {
-          const next = Number(event.target.value)
-          onChange(next)
-          const start = api.slides.slice(0, api.slides.findIndex((slide) => slide.id === slideId)).reduce((sum, slide) => sum + slide.duration, 0)
-          api.setPlaying(false)
-          api.setTime(start + next)
-        }}
-        className="w-full accent-mata-600"
-      />
-    </Field>
+    <>
+      <Field label={`Starts ${start.toFixed(1)}s`}>
+        <input
+          type="range"
+          min={0}
+          max={Math.max(0.2, finish - 0.2)}
+          step={0.1}
+          value={start}
+          onChange={(event) => {
+            const next = Number(event.target.value)
+            onChange({ at: next, end: finish })
+            seek(next)
+          }}
+          className="w-full accent-mata-600"
+        />
+      </Field>
+      <Field label={`Ends ${finish.toFixed(1)}s`}>
+        <input
+          type="range"
+          min={Math.min(duration, start + 0.2)}
+          max={duration}
+          step={0.1}
+          value={finish}
+          onChange={(event) => {
+            const next = Number(event.target.value)
+            onChange({ end: next })
+            seek(next)
+          }}
+          className="w-full accent-mata-600"
+        />
+      </Field>
+    </>
   )
 }
 
